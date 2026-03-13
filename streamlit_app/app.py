@@ -1,54 +1,52 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import yfinance as yf
-import google.generativeai as genai
+import io
 
-st.set_page_config(page_title="Msrlub v2.3", layout="wide")
+st.set_page_config(page_title="Msrlub v2.4", layout="wide")
+st.title("🚀 Msrlub v2.4")
 
-st.title("🚀 Msrlub v2.3")
 uploaded_file = st.file_uploader("楽天証券CSVをアップロード", type="csv")
 
-def analyze_rakuten_csv(file):
-    try:
-        # 1. 全行を一旦読み込む（ヘッダー指定なしで全行テキストとして）
-        df_raw = pd.read_csv(file, encoding="shift_jis", header=None)
-        
-        # 2. 銘柄名と数量の列を探す（全セルを検索）
-        # 銘柄が含まれる行番号を探す
-        header_row_idx = df_raw[df_raw.apply(lambda row: row.astype(str).str.contains('銘柄').any(), axis=1)].index[0]
-        
-        # 3. その行をヘッダーとして再読み込み
-        file.seek(0)
-        df = pd.read_csv(file, encoding="shift_jis", skiprows=header_row_idx)
-        df.columns = df.columns.str.normalize('NFKC').str.strip()
-        
-        # 4. 必要な列を特定
+def robust_read_rakuten(file):
+    # ファイルをテキストとして全行読み込む
+    content = file.read().decode("shift_jis")
+    lines = content.splitlines()
+    
+    # 「銘柄」と「数量」の両方を含む行を探す
+    target_idx = -1
+    for i, line in enumerate(lines):
+        if "銘柄" in line and "数量" in line:
+            target_idx = i
+            break
+            
+    if target_idx == -1:
+        return None, "CSV内に銘柄情報が見つかりません"
+    
+    # 見つけた行から下を改めてCSVとして読み込む
+    data_stream = io.StringIO("\n".join(lines[target_idx:]))
+    df = pd.read_csv(data_stream)
+    
+    # カラム名の正規化
+    df.columns = df.columns.str.normalize('NFKC').str.strip()
+    return df, None
+
+if uploaded_file:
+    df, error = robust_read_rakuten(uploaded_file)
+    
+    if error:
+        st.error(error)
+    else:
+        # 必要な列を特定
         name_c = [c for c in df.columns if '銘柄' in c or '商品' in c][0]
         qty_c = [c for c in df.columns if '数量' in c or '残高' in c][0]
         
-        # 5. データ抽出
-        res = {}
-        targets = {'JT': '日本たばこ', 'SB': 'ソフトバンク', 'IHI': 'ＩＨＩ', 'INPEX': 'ＩＮＰＥＸ'}
-        for k, name in targets.items():
-            # 文字列型に強制変換してから検索
-            match = df[df[name_c].astype(str).str.contains(name, na=False)]
-            res[k] = float(str(match[qty_c].iloc[0]).replace(',', '')) if not match.empty else 0
-        return res
-    except Exception as e:
-        st.error(f"解析失敗: {e}")
-        return None
-
-if uploaded_file:
-    data = analyze_rakuten_csv(uploaded_file)
-    if data:
+        # 簡易抽出
         st.success("解析成功！")
-        # 簡易株価取得
-        prices = {'JT': 3800, 'IHI': 8000, 'SB': 2000} # yfinanceのエラー回避のため一旦固定値も用意
+        targets = {'JT': '日本たばこ', 'SB': 'ソフトバンク', 'IHI': 'ＩＨＩ', 'INPEX': 'ＩＮＰＥＸ'}
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("JT", f"{data['JT']:.0f}株")
-        c2.metric("IHI", f"{data['IHI']:.0f}株")
-        c3.metric("SB", f"{data['SB']:.0f}株")
-    else:
-        st.error("データが見つかりません。")
+        cols = st.columns(3)
+        for i, (k, name) in enumerate(targets.items()):
+            match = df[df[name_c].astype(str).str.contains(name, na=False)]
+            val = float(str(match[qty_c].iloc[0]).replace(',', '')) if not match.empty else 0
+            if i < 3:
+                cols[i].metric(k, f"{val:.0f}株")
