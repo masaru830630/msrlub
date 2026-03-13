@@ -1,51 +1,39 @@
 import streamlit as st
 import pandas as pd
+import io
 
-st.set_page_config(page_title="Msrlub v2.5", layout="wide")
-st.title("🚀 Msrlub v2.5")
+st.set_page_config(page_title="Msrlub v2.6", layout="wide")
+st.title("🚀 Msrlub v2.6")
 
 uploaded_file = st.file_uploader("楽天証券CSVをアップロード", type="csv")
 
-def robust_read_rakuten(file):
-    content = file.read().decode("shift_jis")
-    lines = content.splitlines()
-    target_idx = next((i for i, line in enumerate(lines) if "銘柄" in line and "数量" in line), -1)
-    if target_idx == -1: return None, "銘柄/数量のヘッダーが見つかりません"
-    
-    # データを読み込み
-    import io
-    df = pd.read_csv(io.StringIO("\n".join(lines[target_idx:])))
-    df.columns = df.columns.str.normalize('NFKC').str.strip()
-    return df, None
-
 if uploaded_file:
-    df, error = robust_read_rakuten(uploaded_file)
-    if error:
-        st.error(error)
-    else:
-        name_c = [c for c in df.columns if '銘柄' in c or '商品' in c][0]
-        qty_c = [c for c in df.columns if '数量' in c or '残高' in c][0]
+    # 1. どんな区切り文字でも強引に読むための設定
+    # engine='python' は区切り文字を自動推論してくれるので強力です
+    df = pd.read_csv(uploaded_file, encoding="shift_jis", sep=None, engine='python', on_bad_lines='skip')
+    
+    # 2. 全列の列名を正規化
+    df.columns = df.columns.astype(str).str.normalize('NFKC').str.strip()
+    
+    # 3. デバッグ表示（中身を見れば全て解決する）
+    with st.expander("🔍 CSVの中身を全公開"):
+        st.write(df)
+        st.write("カラム一覧:", df.columns.tolist())
+
+    # 4. ここは変えず、上記で読み込んだdfから抽出
+    # 実際のカラム名に合わせて調整してください
+    try:
+        # 名前が含まれる列を探す
+        name_col = [c for c in df.columns if '銘柄' in c or '商品' in c][0]
+        # 数量が含まれる列を探す
+        qty_col = [c for c in df.columns if '数量' in c or '残高' in c][0]
         
-        # --- デバッグ機能：CSV内の銘柄リストを表示 ---
-        with st.expander("🔍 CSV内の銘柄リストを確認"):
-            st.write(df[name_c].unique().tolist())
-        
-        # --- 検索ロジックの強化 ---
-        targets = {'JT': 'JT', 'SB': 'ソフトバンク', 'IHI': 'IHI', 'INPEX': 'INPEX'}
-        
+        targets = {'JT': '日本たばこ', 'SB': 'ソフトバンク', 'IHI': 'IHI', 'INPEX': 'INPEX'}
         cols = st.columns(3)
         for i, (k, key_word) in enumerate(targets.items()):
-            # 全角/半角、大文字/小文字を無視して検索
-            match = df[df[name_c].astype(str).str.contains(key_word, na=False, case=False)]
-            
-            # 数値抽出（カンマ除去）
-            val = 0
-            if not match.empty:
-                raw_val = str(match[qty_c].iloc[0]).replace(',', '')
-                # 数字のみを抽出
-                import re
-                nums = re.findall(r'\d+', raw_val)
-                val = float(nums[0]) if nums else 0
-            
+            match = df[df[name_col].astype(str).str.contains(key_word, na=False, case=False)]
+            val = float(str(match[qty_col].iloc[0]).replace(',', '')) if not match.empty else 0
             if i < 3:
                 cols[i].metric(k, f"{val:.0f}株")
+    except Exception as e:
+        st.error(f"抽出エラー: {e}")
