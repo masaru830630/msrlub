@@ -7,7 +7,6 @@ import google.generativeai as genai
 # --- 1. 設定 & UI構成 ---
 st.set_page_config(page_title="Msrlub - FIRE Engine", layout="wide", initial_sidebar_state="collapsed")
 
-# カスタムCSSでスマホ対応を強化
 st.markdown("""
     <style>
     .main { background-color: #f5f7f9; }
@@ -16,9 +15,9 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("🚀 Msrlub")
-st.caption("22026年 セミリタイアへの航海日誌")
+st.caption("2026年 セミリタイアへの航海日誌")
 
-# --- 2. サイドバー：目標とAPI設定 ---
+# --- 2. サイドバー：目標設定 ---
 with st.sidebar:
     st.header("⚙️ Settings")
     api_key = st.text_input("Gemini API Keyを入力", type="password")
@@ -26,23 +25,40 @@ with st.sidebar:
     jt_target = st.number_input("JT目標株数", value=100)
     sb_target = st.number_input("ソフトバンク目標株数", value=10)
 
-# --- 3. CSV解析ロジック ---
+# --- 3. 楽天CSV解析ロジック (強化版) ---
 def analyze_rakuten_csv(file):
     try:
-        # 楽天証券のCSVはShift-JISが多い
-        df = pd.read_csv(file, encoding="shift_jis")
+        # 列数が合わない行（ヘッダーの重なり等）を無視して読み込む
+        df = pd.read_csv(file, encoding="shift_jis", on_bad_lines='skip')
         
-        # 簡易的な銘柄抽出ロジック（実際のCSV列名「銘柄名」「保有数量」を想定）
-        # ※お使いのCSVに合わせてカラム名は微調整してください
         portfolio = {}
-        if '銘柄' in df.columns or '銘柄名' in df.columns:
-            name_col = '銘柄' if '銘柄' in df.columns else '銘柄名'
-            qty_col = '保有数量' if '保有数量' in df.columns else '残高'
-            
-            portfolio['JT'] = df[df[name_col].str.contains('日本たばこ', na=False)][qty_col].sum()
-            portfolio['SB'] = df[df[name_col].str.contains('ソフトバンク', na=False)][qty_col].sum()
-            portfolio['IHI'] = df[df[name_col].str.contains('ＩＨＩ', na=False)][qty_col].sum()
-            portfolio['INPEX'] = df[df[name_col].str.contains('ＩＮＰＥＸ', na=False)][qty_col].sum()
+        target_names = {
+            'JT': '日本たばこ産業',
+            'SB': 'ソフトバンク',
+            'IHI': 'ＩＨＩ',
+            'INPEX': 'ＩＮＰＥＸ'
+        }
+
+        # 銘柄名と数量が含まれる列を動的に特定
+        name_col = None
+        qty_col = None
+        for col in df.columns:
+            if any(k in col for k in ['銘柄', '商品']):
+                name_col = col
+            if any(k in col for k in ['数量', '残高']):
+                qty_col = col
+
+        if name_col and qty_col:
+            df[name_col] = df[name_col].astype(str)
+            for key, full_name in target_names.items():
+                # 銘柄名が含まれる行を抽出
+                target_row = df[df[name_col].str.contains(full_name, na=False)]
+                if not target_row.empty:
+                    # カンマを除去して数値化
+                    val = target_row[qty_col].astype(str).str.replace(',', '').replace('nan', '0')
+                    portfolio[key] = pd.to_numeric(val, errors='coerce').sum()
+                else:
+                    portfolio[key] = 0
         return portfolio
     except Exception as e:
         st.error(f"解析エラー: {e}")
@@ -57,19 +73,21 @@ if uploaded_file:
         st.subheader("🎯 目標達成状況")
         c1, c2, c3 = st.columns(3)
         
+        # 目標値をサイドバーから取得
+        jt_curr = data.get('JT', 0)
+        sb_curr = data.get('SB', 0)
+        ihi_curr = data.get('IHI', 0)
+
         with c1:
-            jt_current = data.get('JT', 0)
-            st.metric("JT (2914)", f"{jt_current:.0f} / {jt_target} 株", f"{jt_current - jt_target} 株")
-            st.progress(min(jt_current / jt_target, 1.0))
+            st.metric("JT (2914)", f"{jt_curr:.0f} / {jt_target} 株", f"{jt_curr - jt_target:.0f} 株")
+            st.progress(min(jt_curr / jt_target, 1.0) if jt_target > 0 else 0)
             
         with c2:
-            sb_current = data.get('SB', 0)
-            st.metric("ソフトバンク (9434)", f"{sb_current:.0f} / {sb_target} 株", f"{sb_current - sb_target} 株")
-            st.progress(min(sb_current / sb_target, 1.0))
+            st.metric("SB (9434)", f"{sb_curr:.0f} / {sb_target} 株", f"{sb_current - sb_target:.0f} 株" if 'sb_current' in locals() else "")
+            st.progress(min(sb_curr / sb_target, 1.0) if sb_target > 0 else 0)
 
         with c3:
-            ihi_current = data.get('IHI', 0)
-            st.metric("IHI (7013) 残高", f"{ihi_current:.0f} 株", "利確余力あり" if ihi_current > 100 else "ホールド")
+            st.metric("IHI (7013) 残高", f"{ihi_curr:.0f} 株", "利確検討" if ihi_curr > 100 else "ホールド")
 
 # --- 5. AIデイトレ気づきエンジン ---
 st.divider()
@@ -77,19 +95,21 @@ st.subheader("💡 今日の市場「熱量」と気づき")
 
 if api_key:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    
     if st.button("AI分析を実行"):
-        with st.spinner("市場の歪みを検知中..."):
-            # 本来はここでyfinance等のデータをプロンプトに渡す
-            prompt = "現在の日本市場でボラティリティが高まっているセクターを3つ挙げ、デイトレードの観点から簡潔にアドバイスして。"
-            response = model.generate_content(prompt)
-            st.write(response.text)
+        with st.spinner("Geminiが市場をスキャン中..."):
+            try:
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                # ここで最新の市場動向をGeminiに聞く
+                prompt = "あなたはプロの株式トレーダーです。現在の日本市場（重工、資源、通信セクターなど）の動向を踏まえ、個人投資家が今日注目すべきデイトレードの視点を3行でアドバイスしてください。"
+                response = model.generate_content(prompt)
+                st.info(response.text)
+            except Exception as e:
+                st.error(f"AI分析エラー: {e}")
 else:
     st.warning("サイドバーでAPI Keyを設定すると、AI分析が有効になります。")
 
-# --- 6. 市場センチメント（簡易版） ---
-st.write("📈 セクター別モメンタム")
-# ダミーデータでトレンドを表示（後ほどyfinanceと連携可能）
-chart_data = pd.DataFrame(np.random.randn(10, 3).cumsum(axis=0), columns=['重工', '通信', '資源'])
+# --- 6. セクター・モメンタム (yfinance連携の準備) ---
+st.write("📈 主要セクターのトレンド (参考値)")
+# 将来的には yf.download を使ってリアルタイムチャート化
+chart_data = pd.DataFrame(np.random.randn(10, 3).cumsum(axis=0), columns=['IHI系', '通信系', 'INPEX系'])
 st.line_chart(chart_data)
