@@ -1,9 +1,10 @@
+亀梨、おおくら
+
 import streamlit as st
 import pandas as pd
-import io
 
-st.set_page_config(page_title="Msrlub v2.8", layout="wide")
-st.title("🚀 Msrlub v2.8")
+st.set_page_config(page_title="Msrlub v2.9", layout="wide")
+st.title("🚀 Msrlub v2.9")
 
 uploaded_file = st.file_uploader("楽天証券CSVをアップロード", type="csv")
 
@@ -11,31 +12,30 @@ if uploaded_file is not None:
     content = uploaded_file.read().decode("shift_jis")
     lines = content.splitlines()
     
-    # 全データを抽出してテーブル化
-    # 銘柄と数値のペアを探す
-    data = []
+    # 探索対象のキーワード
+    targets = {'JT': '日本たばこ', 'SB': 'ソフトバンク', 'IHI': 'IHI', 'INPEX': 'INPEX'}
+    results = {k: 0 for k in targets}
+    
+    # 行ごとにループ
     for line in lines:
-        parts = [p.replace('"', '').strip() for p in line.split(',')]
-        # 銘柄名と思われる文字列と、数量と思われる数値を探す
-        for i, p in enumerate(parts):
-            if len(p) > 2 and not p.isdigit() and i+1 < len(parts) and parts[i+1].replace(',','').isdigit():
-                data.append({"銘柄": p, "数量": int(parts[i+1].replace(',',''))})
+        for key, keyword in targets.items():
+            if keyword in line:
+                # 行をカンマで分解
+                parts = line.split(',')
+                # この行の中で、キーワードが含まれるインデックスを探す
+                for i, p in enumerate(parts):
+                    if keyword in p:
+                        # 銘柄名の隣や、一定範囲内にある数字を探す（楽天CSVの構造）
+                        # 銘柄名(i)の直後から、数ステップ以内の数字を探す
+                        for j in range(i + 1, min(i + 5, len(parts))):
+                            val_str = parts[j].replace('"', '').replace(',', '').strip()
+                            # それが数字かつ、明らかに株数（資産合計の桁数でない）か判定
+                            if val_str.isdigit() and 0 < int(val_str) < 100000:
+                                results[key] = int(val_str)
+                                break
     
-    df = pd.DataFrame(data)
-    
-    # 銘柄を選択できるようにする
-    st.subheader("✅ 銘柄の紐付け")
-    with st.sidebar:
-        st.write("### CSV内の全銘柄")
-        all_stocks = df['銘柄'].unique().tolist()
-        sb_name = st.selectbox("ソフトバンクの表記を選んでください", all_stocks, index=0 if not all_stocks else 0)
-
-    # 抽出処理
-    results = {
-        'SB': df[df['銘柄'] == sb_name]['数量'].sum() if sb_name in df['銘柄'].values else 0
-    }
-    
-    st.metric("ソフトバンク", f"{results['SB']:,}株")
-    
-    with st.expander("詳細抽出データ"):
-        st.write(df)
+    st.success("解析完了！")
+    cols = st.columns(3)
+    cols[0].metric("JT", f"{results['JT']:,}株")
+    cols[1].metric("IHI", f"{results['IHI']:,}株")
+    cols[2].metric("SB", f"{results['SB']:,}株")
