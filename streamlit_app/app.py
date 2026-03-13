@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
+import io
 
-st.set_page_config(page_title="Msrlub v2.7", layout="wide")
-st.title("🚀 Msrlub v2.7")
+st.set_page_config(page_title="Msrlub v2.8", layout="wide")
+st.title("🚀 Msrlub v2.8")
 
 uploaded_file = st.file_uploader("楽天証券CSVをアップロード", type="csv")
 
@@ -10,30 +11,31 @@ if uploaded_file is not None:
     content = uploaded_file.read().decode("shift_jis")
     lines = content.splitlines()
     
-    # 銘柄名とターゲットリスト
-    targets = {'JT': '日本たばこ', 'SB': 'ソフトバンク', 'IHI': 'ＩＨＩ', 'INPEX': 'ＩＮＰＥＸ'}
-    results = {k: 0 for k in targets}
-    
-    # 全行をループして「銘柄名」が含まれる行を探し、その行の「数量」にあたる箇所を抽出
-    # 楽天のCSVは「銘柄名,コード,市場,数量,...」の順になっていることが多いです
+    # 全データを抽出してテーブル化
+    # 銘柄と数値のペアを探す
+    data = []
     for line in lines:
-        for key, keyword in targets.items():
-            if keyword in line:
-                parts = line.split(',')
-                # カンマ区切りのリストから、数字っぽい部分を探す
-                # 数量列の位置を特定するための安全策
-                for p in parts:
-                    clean_p = p.replace('"', '').replace(',', '').strip()
-                    # 50株以上などの現実的な数値を判定
-                    if clean_p.isdigit() and int(clean_p) > 0:
-                        results[key] = int(clean_p)
+        parts = [p.replace('"', '').strip() for p in line.split(',')]
+        # 銘柄名と思われる文字列と、数量と思われる数値を探す
+        for i, p in enumerate(parts):
+            if len(p) > 2 and not p.isdigit() and i+1 < len(parts) and parts[i+1].replace(',','').isdigit():
+                data.append({"銘柄": p, "数量": int(parts[i+1].replace(',',''))})
     
-    # 表示
-    st.success("解析成功！")
-    cols = st.columns(3)
-    cols[0].metric("JT", f"{results['JT']:,}株")
-    cols[1].metric("IHI", f"{results['IHI']:,}株")
-    cols[2].metric("SB", f"{results['SB']:,}株")
+    df = pd.DataFrame(data)
+    
+    # 銘柄を選択できるようにする
+    st.subheader("✅ 銘柄の紐付け")
+    with st.sidebar:
+        st.write("### CSV内の全銘柄")
+        all_stocks = df['銘柄'].unique().tolist()
+        sb_name = st.selectbox("ソフトバンクの表記を選んでください", all_stocks, index=0 if not all_stocks else 0)
+
+    # 抽出処理
+    results = {
+        'SB': df[df['銘柄'] == sb_name]['数量'].sum() if sb_name in df['銘柄'].values else 0
+    }
+    
+    st.metric("ソフトバンク", f"{results['SB']:,}株")
     
     with st.expander("詳細抽出データ"):
-        st.write(results)
+        st.write(df)
